@@ -12,8 +12,8 @@ public class Basics {
         // типи даних та змінні
         // primitives - Value types
         byte b = -1;   // 8 bit   !! беззнакових (unsigned) варіацій не існує
-        short s = 1;   // 16      byte b = -1:    1111 1111
-        int i = 1;     // 32      [short] b       0000 0000 1111 1111 == 255
+        short s = 1;   // 16      byte b = -1:    1111 1111                        (byte) s
+        int i = 1;     // 32      [short] b       0000 0000 1111 1111 == 255   ||  1111 1111 0000 0000
         long l = 1L;   // 64      (short) b       1111 1111 1111 1111 == -1
         float f = 1.0f;     // 32
         double d = 1.0E-2;  // 64
