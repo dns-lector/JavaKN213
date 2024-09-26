@@ -16,7 +16,7 @@ public class Truck
     public Truck() {
     }
 
-    public Truck(String name, double cargo ) {
+    public Truck( String name, double cargo ) {
         super( name );
         this.setCargo( cargo );
     }

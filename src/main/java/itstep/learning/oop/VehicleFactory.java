@@ -2,7 +2,6 @@ package itstep.learning.oop;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import itstep.learning.oop.annotations.Product;
 import itstep.learning.oop.annotations.Required;
@@ -12,13 +11,13 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.*;
+import java.util.stream.Stream;
 
 public class VehicleFactory {
-    private Map<Class<?>, List<String>> productClasses = null;
+    private Map<Class<?>, Map<String, Field>> productClasses = null;
 
     public List<Vehicle> loadFromJson( String resourceName ) throws Exception {
         try( InputStream stream = Objects.requireNonNull(
@@ -43,37 +42,77 @@ public class VehicleFactory {
     private Vehicle fromJsonObject( JsonObject obj ) {
         // Перебираємо всі класи-продукти, в них перебираємо всі поля
         // шукаємо повний збіг полів JSON та полів класу
-        Class<?> vehicleClass = null;
-        for( Map.Entry<Class<?>, List<String>> entry :
+        Map.Entry<Class<?>, Map<String, Field>> vehicleClassEntry = null;
+        for( Map.Entry<Class<?>, Map<String, Field>> entry :
                 getProductClasses("itstep.learning.oop").entrySet() ) {
             // чи збігаються поля JSON-об'єкту (obj) та Required набір у класу (entry.getValue())
             boolean isMatch = true;
-            for( String fieldName : entry.getValue() ) {
+            for( String fieldName : entry.getValue().keySet() ) {
                 if( ! obj.has( fieldName ) ) {
                     isMatch = false;
                 }
             }
             // якщо збіг є, то entry.getKey() - це клас, що підходить для цього JSON
             if( isMatch ) {
-                vehicleClass = entry.getKey();
-                break;
+                if( vehicleClassEntry != null ) {
+                    // раніше було вже знайдено збіг і це є другий
+                    throw new RuntimeException(
+                            String.format(
+                                    Locale.ROOT,
+                                    "Ambiguous classes: '%s' and '%s' for data %s",
+                                    vehicleClassEntry.getKey().getName(),
+                                    entry.getKey().getName(),
+                                    obj.toString()
+                            )
+                    );
+                }
+                vehicleClassEntry = entry;
             }
         }
-        // якщо жодного збігу не знайдено, повертаємо null
-        if( vehicleClass == null ) {
-            return null;
+        // якщо жодного збігу не знайдено, повертаємо виняток
+        if( vehicleClassEntry == null ) {
+            throw new RuntimeException( "No class found for data " + obj.toString() );
         }
         // а якщо знайдено, то робимо об'єкт та заповнюємо його поля
+        Vehicle vehicle;
+
         try {
-            Vehicle vehicle = (Vehicle) vehicleClass.getConstructor().newInstance();
-
-            Field field = vehicleClass.getSuperclass().getDeclaredField( "name" );
-            field.setAccessible( true );
-            field.set( vehicle, obj.get("name").getAsString() );
-
+            vehicle = (Vehicle) vehicleClassEntry.getKey().getConstructor().newInstance();
+        }
+        catch( Exception ignored ) {
+            throw new RuntimeException(
+                    "Unable to instantiate class " +
+                    vehicleClassEntry.getKey().getName() +
+                    ". Possible there is no default constructor"
+            );
+        }
+        try{
+            for( String fieldName : vehicleClassEntry.getValue().keySet() ) {
+                Field field = vehicleClassEntry.getValue().get( fieldName );
+                field.setAccessible( true );
+                switch( field.getType().getSimpleName() ) {
+                    case "int":
+                        field.set( vehicle, obj.get(fieldName).getAsInt() );
+                        break;
+                    case "double":
+                        field.set( vehicle, obj.get(fieldName).getAsDouble() );
+                        break;
+                    case "boolean":
+                        field.set( vehicle, obj.get(fieldName).getAsBoolean() );
+                        break;
+                    default:
+                        field.set( vehicle, obj.get(fieldName).getAsString() );
+                }
+            }
             return vehicle;
         }
-        catch( Exception ignored ) { return null; }
+        catch( Exception ignored ) {
+            throw new RuntimeException(
+                "Unable to fill object of class " +
+                vehicleClassEntry.getKey().getName() +
+                ". Type mismatch or access denied."
+            );
+        }
     }
 
     /**
@@ -82,7 +121,7 @@ public class VehicleFactory {
      * [ Bike -> ["type"] ]
      * [ Bus -> ["seats"] ]
      */
-    private Map<Class<?>, List<String>> getProductClasses(String packageName ) {
+    public Map<Class<?>, Map<String, Field>> getProductClasses( String packageName ) {
         if( productClasses != null ) {
             return productClasses;
         }
@@ -113,7 +152,7 @@ public class VehicleFactory {
             }
         }
         // ---------- Знаходимо лише ті класи, які є @Product -----------
-        Map<Class<?>, List<String>> classes = new HashMap<>();
+        Map<Class<?>, Map<String, Field>> classes = new HashMap<>();
         for( String className : classNames ) {
             Class<?> cls;
             try { cls = Class.forName( className ) ; }
@@ -128,25 +167,35 @@ public class VehicleFactory {
 
     /**
      * Знайти всі поля класу, помічені анотацією @Required
+     * @return Map
+     *  "name" => Field(name)
+     *  "seats" => Field(capacity)
      */
-    private List<String> getRequired( Class<?> cls ) {
-        List<String> res = new ArrayList<>();
-        for( Field field : cls.getDeclaredFields() ) {
+    private Map<String, Field> getRequired( Class<?> cls ) {
+        Map<String, Field> res = new HashMap<>();
+        Class<?> superclass = cls.getSuperclass();
+        Field[] fields = superclass == null ? new Field[0] : superclass.getDeclaredFields();
+        Stream.concat(
+                Arrays.stream( cls.getDeclaredFields() ),
+                Arrays.stream( fields ) )
+        .forEach( (field) -> {
             if( field.isAnnotationPresent( Required.class ) ) {
                 Required annotation = field.getAnnotation( Required.class );
                 String requiredName = annotation.value();
                 // boolean isAlter = annotation.isAlternate();
-                res.add(
+                res.put(
                     "".equals( requiredName )
                         ? field.getName()
-                        : requiredName ) ;
+                        : requiredName,
+                    field
+                ) ;
             }
-        }
+        });
         return res;
     }
 
     private String readAsString( InputStream stream ) throws IOException {
-        byte[] buffer = new byte[4096];
+        byte[] buffer = new byte[2048];
         ByteArrayOutputStream byteBuilder = new ByteArrayOutputStream();
         int length;
         while( ( length = stream.read( buffer ) ) != -1 ) {
